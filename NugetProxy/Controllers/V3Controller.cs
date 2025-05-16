@@ -1,16 +1,22 @@
 using Microsoft.AspNetCore.Mvc;
-using System.Net.Http.Headers;
+using NugetProxy.Services; 
 
 namespace NugetProxy.Controllers
 {
     [ApiController]
     [Route("v3")]
-    public class V3Controller(IConfiguration configuration, IHttpClientFactory httpClientFactory) : ControllerBase
+    public class V3Controller : ControllerBase 
     {
-        private readonly string CacheRoot = Path.Combine(configuration["CacheRoot"] ?? "nuget-cache", "v3");
-        private readonly IHttpClientFactory HttpClientFactory = httpClientFactory;
+        private readonly ICacheStorageService _cacheStorageService;
+        private readonly IUpstreamProxyClient _upstreamProxyClient;
 
-        [HttpGet("index.json")] 
+        public V3Controller(ICacheStorageService cacheStorageService, IUpstreamProxyClient upstreamProxyClient)
+        {
+            _cacheStorageService = cacheStorageService;
+            _upstreamProxyClient = upstreamProxyClient;
+        }
+
+        [HttpGet("index.json")]
         public IResult GetIndex()
         {
             var feedBase = $"{Request.Scheme}://{Request.Host}";
@@ -31,55 +37,46 @@ namespace NugetProxy.Controllers
             return Results.Json(index, contentType: "application/json");
         }
 
-        [HttpGet("flatcontainer/{**path}")] 
+        [HttpGet("flatcontainer/{**path}")]
         public async Task<IActionResult> ProxyGetPackage(string path)
         {
-            string cachePath = GetCachePath(path);
+            string cachePath = _cacheStorageService.GetFullPath(path);
 
-            if (System.IO.File.Exists(cachePath))
+            if (_cacheStorageService.FileExists(cachePath))
             {
-                var stream = System.IO.File.OpenRead(cachePath);
-                return File(stream, "application/octet-stream"); 
+                var stream = _cacheStorageService.OpenReadStream(cachePath);
+                return File(stream, "application/octet-stream");
             }
             else
             {
-                string upstreamUrl = $"{path}";
-                using var client = HttpClientFactory.CreateClient("UpstreamBase");
-
-                if (Request.Headers.TryGetValue("Authorization", out var authHeaderValue))
-                {
-                    if (AuthenticationHeaderValue.TryParse(authHeaderValue, out var parsedAuthHeader))
-                    {
-                        client.DefaultRequestHeaders.Authorization = parsedAuthHeader;
-                    }
-                }
+                string upstreamUrl = path; 
 
                 try
                 {
-                    var response = await client.GetAsync(upstreamUrl);
+                    var response = await _upstreamProxyClient.GetAsync(upstreamUrl, Request.Headers);
+
                     if (!response.IsSuccessStatusCode)
                         return StatusCode((int)response.StatusCode);
 
-                    Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
-                    await using (var writeFs = System.IO.File.Create(cachePath))
-                    {
-                        await response.Content.CopyToAsync(writeFs);
-                    }
+                    await using var responseStream = await response.Content.ReadAsStreamAsync();
+                    await _cacheStorageService.SaveFileAsync(cachePath, responseStream);
 
-                    var readFs = System.IO.File.OpenRead(cachePath);
+                    var readFs = _cacheStorageService.OpenReadStream(cachePath);
                     return File(readFs, "application/octet-stream");
                 }
                 catch (HttpRequestException ex)
                 {
                     return Problem($"Error connecting to upstream feed: {ex.Message}", statusCode: 502, title: "Bad Gateway");
                 }
-                catch
+                catch (IOException ex) 
                 {
-                    return NotFound(); 
+                    return Problem($"Error accessing cache: {ex.Message}", statusCode: 500, title: "Cache Access Error");
+                }
+                catch (System.Exception ex) 
+                {
+                    return Problem($"An unexpected error occurred: {ex.Message}", statusCode: 500, title: "Internal Server Error");
                 }
             }
         }
-
-        private string GetCachePath(string path) => Path.Combine(CacheRoot, path.TrimStart('/').Replace("/", Path.DirectorySeparatorChar.ToString()));
     }
 }
