@@ -1,3 +1,5 @@
+using System.Net.Http.Headers;
+
 var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
 
@@ -26,7 +28,7 @@ app.MapGet("/v3/index.json", (HttpContext ctx) =>
     return Results.Json(index, contentType: "application/json");
 });
 
-async Task<IResult> ProxyGet(HttpRequest req, string path) 
+async Task<IResult> ProxyGet(HttpRequest req, string path)
 {
     string cachePath = GetCachePath(path);
 
@@ -39,6 +41,15 @@ async Task<IResult> ProxyGet(HttpRequest req, string path)
     {
         string upstreamUrl = $"{upstreamBase}/{path}";
         using var client = new HttpClient();
+
+        if (req.Headers.TryGetValue("Authorization", out var authHeaderValue))
+        {
+            if (AuthenticationHeaderValue.TryParse(authHeaderValue, out var parsedAuthHeader))
+            {
+                client.DefaultRequestHeaders.Authorization = parsedAuthHeader;
+            }
+        }
+
         try
         {
             var response = await client.GetAsync(upstreamUrl);
@@ -53,6 +64,10 @@ async Task<IResult> ProxyGet(HttpRequest req, string path)
 
             var readFs = File.OpenRead(cachePath);
             return Results.File(readFs, "application/octet-stream");
+        }
+        catch (HttpRequestException ex)
+        {
+            return Results.Problem($"Error connecting to upstream feed: {ex.Message}", statusCode: 502); // Bad Gateway
         }
         catch
         {
