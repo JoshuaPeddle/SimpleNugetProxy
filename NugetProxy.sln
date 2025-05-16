@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.36109.1 d17.14
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NugetProxy", "NugetProxy\NugetProxy.csproj", "{5439D3E7-989F-9DCB-84BA-4FAD6D5B7C98}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NugetProxy.PackageHolder", "NugetProxy.PackageHolder\NugetProxy.PackageHolder.csproj", "{83135F09-DE57-4B24-9BC0-C3D0D0A38B2D}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{5439D3E7-989F-9DCB-84BA-4FAD6D5B7C98}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5439D3E7-989F-9DCB-84BA-4FAD6D5B7C98}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5439D3E7-989F-9DCB-84BA-4FAD6D5B7C98}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5439D3E7-989F-9DCB-84BA-4FAD6D5B7C98}.Release|Any CPU.Build.0 = Release|Any CPU
+		{83135F09-DE57-4B24-9BC0-C3D0D0A38B2D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{83135F09-DE57-4B24-9BC0-C3D0D0A38B2D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{83135F09-DE57-4B24-9BC0-C3D0D0A38B2D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{83135F09-DE57-4B24-9BC0-C3D0D0A38B2D}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {F5B66BE3-5FDF-498D-B7A4-0958D0ED3A0B}
+	EndGlobalSection
+EndGlobal

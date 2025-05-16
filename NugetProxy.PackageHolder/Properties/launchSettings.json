@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "NugetProxy.PackageHolder": {
+      "commandName": "Project"
+    },
+    "Container (Dockerfile)": {
+      "commandName": "Docker"
+    }
+  }
+}
