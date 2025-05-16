@@ -5,16 +5,10 @@ namespace NugetProxy.Controllers
 {
     [ApiController]
     [Route("v3")]
-    public class V3Controller : ControllerBase
+    public class V3Controller(IConfiguration configuration, IHttpClientFactory httpClientFactory) : ControllerBase
     {
-        private string UpstreamBase;
-        private string CacheRoot;
-
-        public V3Controller(IConfiguration configuration)
-        {
-            CacheRoot = Path.Combine(configuration["CacheRoot"] ?? "nuget-cache", "v3");
-            UpstreamBase = configuration["UpstreamBase"] ?? "https://api.nuget.org/v3/flatcontainer";
-        }
+        private readonly string CacheRoot = Path.Combine(configuration["CacheRoot"] ?? "nuget-cache", "v3");
+        private readonly IHttpClientFactory HttpClientFactory = httpClientFactory;
 
         [HttpGet("index.json")] 
         public IResult GetIndex()
@@ -49,8 +43,8 @@ namespace NugetProxy.Controllers
             }
             else
             {
-                string upstreamUrl = $"{UpstreamBase}/{path}";
-                using var client = new HttpClient();
+                string upstreamUrl = $"{path}";
+                using var client = HttpClientFactory.CreateClient("UpstreamBase");
 
                 if (Request.Headers.TryGetValue("Authorization", out var authHeaderValue))
                 {
