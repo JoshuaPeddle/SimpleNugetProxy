@@ -10,6 +10,15 @@
 
   <ItemGroup>
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+	<PackageReference Include="Azure.Core" Version="1.46.1" />
+	<packageReference Include="Microsoft.Extensions.Configuration" Version="7.0.0" />
+	<PackageReference Include="Microsoft.Data.SqlClient" Version="6.0.2" />
+	<PackageReference Include="AutoMapper" Version="14.0.0" />
+	<PackageReference Include="Npgsql" Version="9.0.3" />
+	<PackageReference Include="Microsoft.Graph" Version="5.7.0" />
+	<PackageReference Include="GraphQL" Version="8.5.0" />
+	<PackageReference Include="VelocityGraph" Version="11.1.1" />
+	<PackageReference Include="SQLitePCLRaw.provider.dynamic_cdecl" Version="2.1.11" />
   </ItemGroup>
 
 </Project>

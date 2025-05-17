@@ -1,5 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
-using NugetProxy.Services; 
+using NugetProxy.Services.Interfaces;
 
 namespace NugetProxy.Controllers
 {

@@ -1,4 +1,5 @@
 using NugetProxy.Services;
+using NugetProxy.Services.Interfaces;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.
@@ -13,7 +14,7 @@ builder.Services.AddHttpClient("UpstreamBase", client =>
     client.BaseAddress = new Uri(builder.Configuration["UpstreamBase"] ?? "https://api.nuget.org/v3/flatcontainer");
 });
 
-builder.Services.AddSingleton<ICacheStorageService, FileSystemCacheStorageService>();
+builder.Services.AddSingleton<ICacheStorageService, SizeLimitedFileSystemCacheStorageService>();
 builder.Services.AddScoped<IUpstreamProxyClient, HttpUpstreamProxyClient>();
 
 var app = builder.Build();

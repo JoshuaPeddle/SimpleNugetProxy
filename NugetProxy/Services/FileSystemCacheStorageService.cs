@@ -1,3 +1,5 @@
+using NugetProxy.Services.Interfaces;
+
 namespace NugetProxy.Services
 {
     public class FileSystemCacheStorageService : ICacheStorageService
