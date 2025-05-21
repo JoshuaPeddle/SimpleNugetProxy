@@ -26,7 +26,8 @@ Key configuration settings:
     *   Example: `"https://api.nuget.org/v3/flatcontainer/"`
 *   `CacheRoot`: The path to the directory where NuGet packages will be cached. This can be an absolute or relative path.
     *   Example: `"nuget-cache"`
-
+*   `MaxCacheSizeMB`: The maximum diskspace occupied by the cache.
+    *   Example: `500`
  
 ## Usage
 
