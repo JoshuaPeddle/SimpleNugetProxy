@@ -1,4 +1,4 @@
-namespace NugetProxy.Services
+namespace NugetProxy.Services.Interfaces
 {
     public interface IUpstreamProxyClient
     {

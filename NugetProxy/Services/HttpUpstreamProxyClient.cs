@@ -1,3 +1,4 @@
+using NugetProxy.Services.Interfaces;
 using System.Net.Http.Headers;
 
 namespace NugetProxy.Services
