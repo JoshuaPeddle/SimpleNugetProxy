@@ -1,198 +1,264 @@
-using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
 using NugetProxy.Services.Interfaces;
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace NugetProxy.Services
 {
-    public class SizeLimitedFileSystemCacheStorageService : ICacheStorageService
+    /// <summary>
+    /// A file system cache that removes the least recently used files when it passes its size limit.
+    ///
+    /// The index of what is cached lives in memory and is built once at start-up, so eviction never
+    /// walks the directory. The lock covers only index updates: downloads are copied to a temporary
+    /// file outside it and renamed into place, so a reader never sees a partly written file.
+    /// </summary>
+    public sealed class SizeLimitedFileSystemCacheStorageService : ICacheStorageService
     {
-        private readonly string _cacheRoot;
-        private readonly string _normalizedCacheRoot;
-        private readonly long _maxCacheSizeInBytes;
-        private readonly SemaphoreSlim _semaphore = new SemaphoreSlim(1, 1);
-
         private const long Megabyte = 1024L * 1024L;
-        private const long DefaultMaxCacheSizeMB = 1024; // 1 GB in MB
+        private const string TempDirectoryName = ".tmp";
 
-        public SizeLimitedFileSystemCacheStorageService(IConfiguration configuration)
+        private readonly string _root;
+        private readonly string _tempRoot;
+        private readonly long _maxBytes;
+        private readonly TimeProvider _time;
+        private readonly ILogger<SizeLimitedFileSystemCacheStorageService> _logger;
+
+        private readonly object _gate = new();
+        private readonly Dictionary<string, Entry> _index = new(StringComparer.Ordinal);
+        private long _currentBytes;
+
+        private sealed class Entry
         {
-            _cacheRoot = Path.Combine(configuration["CacheRoot"] ?? "nuget-cache", "v3");
-            _normalizedCacheRoot = Path.GetFullPath(_cacheRoot);    
+            public long Length;
+            public long LastAccessTicks;
+        }
 
-            if (!Directory.Exists(_cacheRoot))
-            {
-                Directory.CreateDirectory(_cacheRoot);
-            }
+        public SizeLimitedFileSystemCacheStorageService(
+            IOptions<ProxyOptions> options,
+            TimeProvider time,
+            ILogger<SizeLimitedFileSystemCacheStorageService> logger)
+        {
+            _time = time;
+            _logger = logger;
+            _root = Path.GetFullPath(Path.Combine(options.Value.CacheRoot, "v3"));
+            _tempRoot = Path.Combine(_root, TempDirectoryName);
+            _maxBytes = (options.Value.MaxCacheSizeMB > 0 ? options.Value.MaxCacheSizeMB : 500) * Megabyte;
 
-            string maxCacheSizeConfig = configuration["MaxCacheSizeMB"];
-            if (long.TryParse(maxCacheSizeConfig, out long maxCacheSizeMB) && maxCacheSizeMB > 0)
+            Directory.CreateDirectory(_root);
+            Directory.CreateDirectory(_tempRoot);
+            LoadIndex();
+        }
+
+        public long CurrentSizeBytes
+        {
+            get
             {
-                _maxCacheSizeInBytes = maxCacheSizeMB * Megabyte;
-            }
-            else
-            {
-                _maxCacheSizeInBytes = DefaultMaxCacheSizeMB * Megabyte;
-                Console.WriteLine($"MaxCacheSizeMB not configured or invalid, using default: {DefaultMaxCacheSizeMB} MB ({_maxCacheSizeInBytes} bytes).");
+                lock (_gate)
+                {
+                    return _currentBytes;
+                }
             }
         }
 
-        public string GetFullPath(string relativePath) => Path.Combine(_cacheRoot, relativePath.TrimStart('/').Replace("/", Path.DirectorySeparatorChar.ToString()));
-
-        public void EnsureDirectoryExists(string path)
+        // Files already on disk are ordered by when they were last written, the best that survives a restart.
+        private void LoadIndex()
         {
-            if (!string.IsNullOrEmpty(path) && !Directory.Exists(path))
+            foreach (var leftover in Directory.EnumerateFiles(_tempRoot))
             {
-                Directory.CreateDirectory(path);
+                TryDelete(leftover);
             }
+
+            foreach (var file in new DirectoryInfo(_root).EnumerateFiles("*", SearchOption.AllDirectories))
+            {
+                if (file.FullName.StartsWith(_tempRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var key = Path.GetRelativePath(_root, file.FullName).Replace(Path.DirectorySeparatorChar, '/');
+                _index[key] = new Entry { Length = file.Length, LastAccessTicks = file.LastWriteTimeUtc.Ticks };
+                _currentBytes += file.Length;
+            }
+
+            _logger.LogInformation("Cache at {Root} holds {Count} files, {Megabytes} MB of {MaxMegabytes} MB",
+                _root, _index.Count, _currentBytes / Megabyte, _maxBytes / Megabyte);
         }
 
-        public bool FileExists(string path) => File.Exists(path);
-
-        public Stream OpenReadStream(string path)
+        // Defence in depth: PackagePath has already limited what a request can name.
+        private string ResolvePath(string relativePath)
         {
-            if (!File.Exists(path))
+            var full = Path.GetFullPath(Path.Combine(_root, relativePath));
+            if (!full.StartsWith(_root + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+                || full.StartsWith(_tempRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal))
             {
-                throw new FileNotFoundException("File not found.", path);
+                throw new ArgumentException("Path is outside the cache.", nameof(relativePath));
             }
 
-            _semaphore.Wait();
+            return full;
+        }
+
+        public Stream? TryOpenRead(string relativePath)
+        {
+            var path = ResolvePath(relativePath);
+
+            lock (_gate)
+            {
+                if (!_index.TryGetValue(relativePath, out var entry))
+                {
+                    return null;
+                }
+
+                entry.LastAccessTicks = _time.GetUtcNow().UtcTicks;
+            }
+
             try
             {
-                if (!File.Exists(path)) 
-                {
-                     throw new FileNotFoundException("File not found (disappeared before access time update).", path);
-                }
-                File.SetLastAccessTimeUtc(path, DateTime.UtcNow);
+                // FileShare.Delete lets an eviction remove the file while a download is still reading it.
+                return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 81920, FileOptions.Asynchronous | FileOptions.SequentialScan);
             }
-            finally
+            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
             {
-                _semaphore.Release();
+                Forget(relativePath);
+                return null;
             }
-            
-            return File.OpenRead(path);
         }
 
-        public async Task SaveFileAsync(string path, Stream contentStream)
+        public async Task<Stream> StoreAsync(string relativePath, Stream content, CancellationToken cancellationToken = default)
         {
-            EnsureDirectoryExists(Path.GetDirectoryName(path)!);
+            var destination = ResolvePath(relativePath);
+            var temp = Path.Combine(_tempRoot, Guid.NewGuid().ToString("N"));
+            long length;
 
-            string tempFilePath = Path.GetTempFileName();
-            long newFileLength;
-
-            await _semaphore.WaitAsync();
             try
             {
-                await using (var tempFileStream = File.Create(tempFilePath))
+                await using (var output = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, FileOptions.Asynchronous))
                 {
-                    await contentStream.CopyToAsync(tempFileStream);
-                }
-                newFileLength = new FileInfo(tempFilePath).Length;
-
-                await EnsureCapacityAsync(newFileLength);
-
-                File.Move(tempFilePath, path, overwrite: true);
-                File.SetLastAccessTimeUtc(path, DateTime.UtcNow); 
-            }
-            finally
-            {
-                if (File.Exists(tempFilePath))
-                {
-                    File.Delete(tempFilePath);
-                }
-                _semaphore.Release();
-            }
-        }
-
-        private async Task EnsureCapacityAsync(long sizeOfFileToBeAdded)
-        {
-
-            if (sizeOfFileToBeAdded > _maxCacheSizeInBytes)
-            {
-                throw new IOException($"File size ({sizeOfFileToBeAdded} bytes) exceeds the total maximum cache size ({_maxCacheSizeInBytes} bytes).");
-            }
-
-            var cacheFiles = GetCacheFilesSortedByAccessTime().ToList();
-            long currentCacheSize = cacheFiles.Sum(f => f.Length);
-
-            long spaceToMake = (currentCacheSize + sizeOfFileToBeAdded) - _maxCacheSizeInBytes;
-
-            if (spaceToMake <= 0)
-            {
-                return; 
-            }
-
-            foreach (var fileToEvict in cacheFiles)
-            {
-                if (spaceToMake <= 0) break;
-
-                try
-                {
-                    string directoryOfEvictedFile = Path.GetDirectoryName(fileToEvict.FullName);
-                    long evictedFileSize = fileToEvict.Length;
-                    fileToEvict.Delete();
-                    Console.WriteLine($"Evicted file {fileToEvict.FullName} to free up {evictedFileSize} bytes.");
-                    spaceToMake -= evictedFileSize;
-                    
-                    CleanUpEmptyDirectories(directoryOfEvictedFile);
-                }
-                catch (IOException ex)
-                {
-                    Console.WriteLine($"Failed to evict file {fileToEvict.FullName}: {ex.Message}");
+                    await content.CopyToAsync(output, cancellationToken);
+                    length = output.Length;
                 }
             }
-
-            currentCacheSize = GetCacheFilesSortedByAccessTime().Sum(f => f.Length);
-            if (currentCacheSize + sizeOfFileToBeAdded > _maxCacheSizeInBytes)
+            catch
             {
-                throw new IOException("Could not free enough space in the cache to save the new file after eviction attempts.");
+                TryDelete(temp);
+                throw;
             }
-        }
 
-        private IEnumerable<FileInfo> GetCacheFilesSortedByAccessTime()
-        {
-            var directoryInfo = new DirectoryInfo(_cacheRoot);
-            if (!directoryInfo.Exists)
+            if (length > _maxBytes)
             {
-                return Enumerable.Empty<FileInfo>();
+                _logger.LogWarning("{Path} is {Megabytes} MB, larger than the whole cache; serving it without keeping it", relativePath, length / Megabyte);
+                return new FileStream(temp, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, FileOptions.Asynchronous | FileOptions.DeleteOnClose);
             }
-            return directoryInfo.GetFiles("*.*", SearchOption.AllDirectories)
-                                .OrderBy(f => f.LastAccessTimeUtc);
-        }
 
-        private void CleanUpEmptyDirectories(string directoryPath)
-        {
-            if (string.IsNullOrEmpty(directoryPath)) return;
-
-            string normalizedDirPath = Path.GetFullPath(directoryPath);
-
-            if (!normalizedDirPath.StartsWith(_normalizedCacheRoot, StringComparison.OrdinalIgnoreCase) || 
-                string.Equals(normalizedDirPath, _normalizedCacheRoot, StringComparison.OrdinalIgnoreCase))
+            List<string> evicted;
+            lock (_gate)
             {
-                return;
+                evicted = MakeRoomFor(length, relativePath);
             }
-            
+
+            // Deleting outside the lock keeps slow disks from stalling readers.
+            foreach (var key in evicted)
+            {
+                var path = ResolvePath(key);
+                TryDelete(path);
+                RemoveEmptyDirectories(Path.GetDirectoryName(path));
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
             try
             {
-                while (Directory.Exists(normalizedDirPath) && !Directory.EnumerateFileSystemEntries(normalizedDirPath).Any())
-                {
-                    if (string.Equals(normalizedDirPath, _normalizedCacheRoot, StringComparison.OrdinalIgnoreCase)) break;
+                File.Move(temp, destination, overwrite: true);
+            }
+            catch (IOException) when (File.Exists(destination))
+            {
+                // Another request stored the same file first and has it open. Package files never
+                // change once published, so the copy already in place is as good as this one.
+                TryDelete(temp);
+                length = new FileInfo(destination).Length;
+            }
 
-                    Directory.Delete(normalizedDirPath);
-                    Console.WriteLine($"Cleaned up empty directory {normalizedDirPath}");
-                    
-                    normalizedDirPath = Path.GetDirectoryName(normalizedDirPath);
-                    if (string.IsNullOrEmpty(normalizedDirPath) || string.Equals(normalizedDirPath, _normalizedCacheRoot, StringComparison.OrdinalIgnoreCase))
-                        break;
+            lock (_gate)
+            {
+                if (_index.TryGetValue(relativePath, out var existing))
+                {
+                    _currentBytes -= existing.Length;
+                }
+
+                _index[relativePath] = new Entry { Length = length, LastAccessTicks = _time.GetUtcNow().UtcTicks };
+                _currentBytes += length;
+            }
+
+            return TryOpenRead(relativePath)
+                   ?? throw new IOException($"{relativePath} was removed from the cache while it was being stored.");
+        }
+
+        // Called with the lock held. Removes entries from the index and returns their keys; the files go afterwards.
+        private List<string> MakeRoomFor(long incomingBytes, string incomingKey)
+        {
+            var evicted = new List<string>();
+
+            var replacing = _index.TryGetValue(incomingKey, out var current) ? current.Length : 0;
+            var overflow = _currentBytes - replacing + incomingBytes - _maxBytes;
+            if (overflow <= 0)
+            {
+                return evicted;
+            }
+
+            foreach (var pair in _index.Where(p => p.Key != incomingKey).OrderBy(p => p.Value.LastAccessTicks).ToList())
+            {
+                if (overflow <= 0)
+                {
+                    break;
+                }
+
+                _index.Remove(pair.Key);
+                _currentBytes -= pair.Value.Length;
+                overflow -= pair.Value.Length;
+                evicted.Add(pair.Key);
+                _logger.LogInformation("Evicting {Path} ({Kilobytes} KB) to stay within the cache size", pair.Key, pair.Value.Length / 1024);
+            }
+
+            return evicted;
+        }
+
+        private void Forget(string relativePath)
+        {
+            lock (_gate)
+            {
+                if (_index.Remove(relativePath, out var entry))
+                {
+                    _currentBytes -= entry.Length;
                 }
             }
-            catch (IOException ex)
+        }
+
+        private static void TryDelete(string path)
+        {
+            try
             {
-                Console.WriteLine($"Error cleaning up directory {directoryPath}: {ex.Message}");
+                File.Delete(path);
+            }
+            catch (IOException)
+            {
+                // Still open by a reader on a platform that forbids deleting it; it is already out of the index.
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
+
+        private void RemoveEmptyDirectories(string? directory)
+        {
+            try
+            {
+                while (!string.IsNullOrEmpty(directory)
+                       && directory.StartsWith(_root + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+                       && !Directory.EnumerateFileSystemEntries(directory).Any())
+                {
+                    Directory.Delete(directory);
+                    directory = Path.GetDirectoryName(directory);
+                }
+            }
+            catch (IOException)
+            {
+                // A concurrent store created something in it; leave it.
             }
         }
     }

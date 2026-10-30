@@ -1,32 +1,45 @@
-using NugetProxy.Services.Interfaces;
+using System.Net;
 using System.Net.Http.Headers;
+using NugetProxy.Services.Interfaces;
 
 namespace NugetProxy.Services
 {
     public class HttpUpstreamProxyClient : IUpstreamProxyClient
     {
-        private readonly IHttpClientFactory _httpClientFactory;
-        private const string HttpClientName = "UpstreamBase";
+        private readonly HttpClient _client;
 
-        public HttpUpstreamProxyClient(IHttpClientFactory httpClientFactory)
+        public HttpUpstreamProxyClient(HttpClient client)
         {
-            _httpClientFactory = httpClientFactory;
+            _client = client;
         }
 
-        public async Task<HttpResponseMessage> GetAsync(string requestUri, IHeaderDictionary requestHeaders)
-        {
-            using var client = _httpClientFactory.CreateClient(HttpClientName);
+        public Task<HttpResponseMessage> GetAsync(string relativePath, string? authorization, CancellationToken cancellationToken)
+            => SendAsync(HttpMethod.Get, relativePath, authorization, cancellationToken);
 
-            if (requestHeaders.TryGetValue("Authorization", out var authHeaderValues))
+        public async Task<HttpStatusCode> HeadAsync(string relativePath, string? authorization, CancellationToken cancellationToken)
+        {
+            using var head = await SendAsync(HttpMethod.Head, relativePath, authorization, cancellationToken);
+            if (head.StatusCode is not (HttpStatusCode.MethodNotAllowed or HttpStatusCode.NotImplemented))
             {
-                string? authHeaderValue = authHeaderValues.FirstOrDefault();
-                if (authHeaderValue != null && AuthenticationHeaderValue.TryParse(authHeaderValue, out var parsedAuthHeader))
-                {
-                    client.DefaultRequestHeaders.Authorization = parsedAuthHeader;
-                }
+                return head.StatusCode;
             }
-            
-            return await client.GetAsync(requestUri);
+
+            // Headers only: the body is never read, and disposing the response drops the connection.
+            using var get = await SendAsync(HttpMethod.Get, relativePath, authorization, cancellationToken);
+            return get.StatusCode;
+        }
+
+        private Task<HttpResponseMessage> SendAsync(HttpMethod method, string relativePath, string? authorization, CancellationToken cancellationToken)
+        {
+            var request = new HttpRequestMessage(method, relativePath);
+
+            // Only a well-formed Authorization header is passed on, so the caller cannot smuggle anything else in.
+            if (authorization != null && AuthenticationHeaderValue.TryParse(authorization, out var parsed))
+            {
+                request.Headers.Authorization = parsed;
+            }
+
+            return _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         }
     }
 }
