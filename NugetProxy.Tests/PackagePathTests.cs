@@ -10,7 +10,7 @@ public class PackagePathTests
     [InlineData("newtonsoft.json/13.0.3/newtonsoft.json.13.0.3.nupkg", "newtonsoft.json/13.0.3/newtonsoft.json.13.0.3.nupkg")]
     [InlineData("Newtonsoft.Json/13.0.3/Newtonsoft.Json.13.0.3.nupkg", "newtonsoft.json/13.0.3/newtonsoft.json.13.0.3.nupkg")]
     [InlineData("newtonsoft.json/13.0.3/newtonsoft.json.nuspec", "newtonsoft.json/13.0.3/newtonsoft.json.nuspec")]
-    [InlineData("townsuite.foo/26.1.0-beta.1+build.5/townsuite.foo.26.1.0-beta.1+build.5.nupkg", "townsuite.foo/26.1.0-beta.1+build.5/townsuite.foo.26.1.0-beta.1+build.5.nupkg")]
+    [InlineData("contoso.foo/26.1.0-beta.1+build.5/contoso.foo.26.1.0-beta.1+build.5.nupkg", "contoso.foo/26.1.0-beta.1+build.5/contoso.foo.26.1.0-beta.1+build.5.nupkg")]
     public void Accepts_what_NuGet_asks_for_and_lower_cases_it(string input, string expected)
     {
         Assert.True(PackagePath.TryParse(input, out var parsed));

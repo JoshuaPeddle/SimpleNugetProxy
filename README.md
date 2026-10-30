@@ -27,7 +27,7 @@ never handed to someone the upstream would refuse.
 - If the upstream is unreachable, a caller it allowed within `AuthStaleSeconds` (a day) is still served from the
   cache, so an upstream outage does not stop builds that only need packages already cached. A caller that sent
   no login gets `401`, so NuGet then sends its credentials; anyone else gets `502`.
-- For a public upstream such as nuget.org there is nothing to protect: set `ValidateCredentials` to `false`.
+- It is on by default, and also works against nuget.org. For a public upstream there is nothing to protect, so set `ValidateCredentials` to `false` to skip the extra request.
 
 Credentials are the client's own. Put the upstream feed's login in the NuGet config on the build machine and the
 proxy passes it on; the proxy stores no credentials. It answers `401` with a `WWW-Authenticate` challenge so
@@ -48,7 +48,7 @@ Settings are in `appsettings.json`, and any of them can be set by an environment
 | `UpstreamBase` | `https://api.nuget.org/v3/flatcontainer/` | The upstream feed's flat container URL. One upstream per proxy: run one proxy per feed. |
 | `CacheRoot` | `nuget-cache` | Where package files are kept. |
 | `MaxCacheSizeMB` | `500` | Size limit before least-recently-used files are removed. |
-| `ValidateCredentials` | `true` in code, `false` in the shipped `appsettings.json` | Ask the upstream before serving a cached file. Turn on for any private upstream. |
+| `ValidateCredentials` | `true` | Ask the upstream before serving a cached file. Set `false` only for a public upstream such as nuget.org, where there is nothing to protect and the extra request per package is wasted. |
 | `AuthCacheSeconds` | `300` | How long an "allowed" answer is reused. |
 | `AuthStaleSeconds` | `86400` | How long a recent "allowed" is trusted while the upstream is down. |
 | `PublicBaseUrl` | request's own address | The address clients use, e.g. `https://nuget-cache.example.com`. Set it behind a reverse proxy that terminates TLS. |
@@ -61,7 +61,6 @@ Example for a private feed on a ProGet server:
 ```sh
 docker run -d --name nuget-cache -p 5182:5182 -v nuget-cache:/cache \
   -e UpstreamBase=https://proget.example.com/nuget/Internal/v3/flatcontainer/ \
-  -e ValidateCredentials=true \
   -e PublicBaseUrl=https://nuget-cache.example.com \
   nugetproxy
 ```

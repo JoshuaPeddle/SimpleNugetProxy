@@ -12,8 +12,8 @@ namespace NugetProxy.Tests;
 /// <summary>The whole request pipeline against an in-memory upstream.</summary>
 public sealed class ProxyEndToEndTests : IDisposable
 {
-    private const string Nupkg = "townsuite.secret/1.0.0/townsuite.secret.1.0.0.nupkg";
-    private const string VersionList = "townsuite.secret/index.json";
+    private const string Nupkg = "contoso.secret/1.0.0/contoso.secret.1.0.0.nupkg";
+    private const string VersionList = "contoso.secret/index.json";
     private static readonly string AliceAuth = Basic("alice", "pw-alice");
     private static readonly string BobAuth = Basic("bob", "pw-bob");
 
@@ -221,14 +221,14 @@ public sealed class ProxyEndToEndTests : IDisposable
     public async Task Upstream_answers_are_passed_on_when_a_client_can_act_on_them()
     {
         Assert.Equal(HttpStatusCode.Unauthorized, (await Get(Nupkg, BobAuth)).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await Get("townsuite.missing/index.json", AliceAuth)).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await Get("contoso.missing/index.json", AliceAuth)).StatusCode);
     }
 
     [Theory]
     [InlineData("../../etc/passwd")]
     [InlineData("..%2f..%2fetc%2fpasswd")]
-    [InlineData("townsuite.secret/..%2f..%2findex.json")]
-    [InlineData("townsuite.secret/1.0.0/townsuite.secret.1.0.0.nupkg.sha512")]
+    [InlineData("contoso.secret/..%2f..%2findex.json")]
+    [InlineData("contoso.secret/1.0.0/contoso.secret.1.0.0.nupkg.sha512")]
     [InlineData("not-a-package")]
     public async Task Paths_that_are_not_package_requests_never_reach_the_cache_or_the_upstream(string path)
     {
@@ -241,7 +241,7 @@ public sealed class ProxyEndToEndTests : IDisposable
     [Fact]
     public async Task Uppercase_requests_share_one_cache_entry()
     {
-        await Get("TownSuite.Secret/1.0.0/TownSuite.Secret.1.0.0.nupkg", AliceAuth);
+        await Get("Contoso.Secret/1.0.0/Contoso.Secret.1.0.0.nupkg", AliceAuth);
         await Get(Nupkg, AliceAuth);
 
         Assert.Equal(1, _upstream.Gets);
